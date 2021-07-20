@@ -1,21 +1,14 @@
-# TypeScript Boilerplate
+# ProseMirror-like Frontend Architecture
 
-This is a simple setup for getting started building a web application using TypeScript, React, Redux, ImmutableJS, and Glamor.
+Goal:
+Since I'm already using ProseMirror, what if we were to model an entire application with a similar
+style for state management a'la Elm Architecture.
 
-## Getting Started
+TODO:
+- thoughts on making EditorState not a class? then we wouldn't need this whole "save" thing.
+  its an interesting mix between functional and object-oriented. Not a bad thing necessarily,
+  but where's the line?
+- I can imagine a similar architecture for other side-effects as well. Similar to React itself
+  declaring the HTML side-effect, we can do something similar where we "render" the keyboard
+  effects that we want... I wonder how useful that would be.
 
-```sh
-git clone git@github.com:ccorcos/typescript-boilerplate.git project
-cd project
-git remote remove origin
-npm install
-npm start
-```
-
-An in order to be able to deploy this using Github pages, you'll need to create an push an initial branch to Github:
-
-```sh
-git checkout -b gh-pages
-git push origin gh-pages
-git checkout master
-```
