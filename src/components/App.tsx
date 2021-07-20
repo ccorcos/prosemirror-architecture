@@ -8,12 +8,17 @@ import React, {
 } from "react"
 
 // Goal:
-// What if I modeled by entire application in this Elm/ProseMirror/Redux sort of way?
+// Since I'm using ProseMirror, what if we were to model an entire application with a similar
+// style for state management a'la Elm Architecture.
 
 // TODO:
 // - thoughts on making EditorState not a class? then we wouldn't need this whole "save" thing.
 //   its an interesting mix between functional and object-oriented. Not a bad thing necessarily,
 //   but where's the line?
+// - I can imagine a similar architecture for other side-effects as well. Similar to React itself
+//   declaring the HTML side-effect, we can do something similar where we "render" the keyboard
+//   effects that we want... I wonder how useful that would be.
+//
 
 // ==================================================================
 // Tab-based Editor with top-Level state.
@@ -25,16 +30,26 @@ type StateMachine<S, A, D> = {
 	save: (state: S) => D
 }
 
+type TabState = {
+	title: string
+	editorState: EditorState
+}
+
+type TabStateJSON = {
+	title: string
+	editorState: EditorStateJSON
+}
+
 type TabbedEditorsState = {
-	leftTabs: EditorState[]
-	currentTab: EditorState
-	rightTabs: EditorState[]
+	leftTabs: TabState[]
+	currentTab: TabState
+	rightTabs: TabState[]
 }
 
 type TabbedEditorsStateJSON = {
-	leftTabs: EditorStateJSON[]
-	currentTab: EditorStateJSON
-	rightTabs: EditorStateJSON[]
+	leftTabs: TabStateJSON[]
+	currentTab: TabStateJSON
+	rightTabs: TabStateJSON[]
 }
 
 type TabbedEditorsAction =
@@ -53,12 +68,24 @@ const TabbedEditorsMachine: StateMachine<
 			return {
 				leftTabs: [],
 				rightTabs: [],
-				currentTab: EditorStateMachine.init(),
+				currentTab: {
+					title: "",
+					editorState: EditorStateMachine.init(),
+				},
 			}
 		return {
-			leftTabs: json.leftTabs.map(EditorState.fromJSON),
-			rightTabs: json.rightTabs.map(EditorState.fromJSON),
-			currentTab: EditorState.fromJSON(json.currentTab),
+			leftTabs: json.leftTabs.map((tabState) => ({
+				...tabState,
+				editorState: EditorState.fromJSON(tabState.editorState),
+			})),
+			rightTabs: json.rightTabs.map((tabState) => ({
+				...tabState,
+				editorState: EditorState.fromJSON(tabState.editorState),
+			})),
+			currentTab: {
+				...json.currentTab,
+				editorState: EditorState.fromJSON(json.currentTab.editorState),
+			},
 		}
 	},
 	update: (state, action) => {
@@ -69,21 +96,39 @@ const TabbedEditorsMachine: StateMachine<
 				return closeTab(state, action.direction)
 			case "new-tab":
 				return newTab(state)
-			case "edit-tab":
+			case "edit-tab": {
+				const editorState = EditorStateMachine.update(
+					state.currentTab.editorState,
+					action.action
+				)
+
+				let title = editorState.text.split("\n")[0] || "Untitled"
+				if (title.length > 10) title = title.slice(0, 10) + "..."
+
 				return {
 					...state,
-					currentTab: EditorStateMachine.update(
-						state.currentTab,
-						action.action
-					),
+					currentTab: {
+						title,
+						editorState,
+					},
 				}
+			}
 		}
 	},
 	save: (state) => {
 		return {
-			leftTabs: state.leftTabs.map((s) => s.toJSON()),
-			currentTab: state.currentTab.toJSON(),
-			rightTabs: state.rightTabs.map((s) => s.toJSON()),
+			leftTabs: state.leftTabs.map((s) => ({
+				title: s.title,
+				editorState: s.editorState.toJSON(),
+			})),
+			currentTab: {
+				title: state.currentTab.title,
+				editorState: state.currentTab.editorState.toJSON(),
+			},
+			rightTabs: state.rightTabs.map((s) => ({
+				title: s.title,
+				editorState: s.editorState.toJSON(),
+			})),
 		}
 	},
 }
@@ -91,7 +136,10 @@ const TabbedEditorsMachine: StateMachine<
 function newTab(state: TabbedEditorsState): TabbedEditorsState {
 	return {
 		leftTabs: [...state.leftTabs, state.currentTab],
-		currentTab: EditorStateMachine.init(),
+		currentTab: {
+			title: "",
+			editorState: EditorStateMachine.init(),
+		},
 		rightTabs: state.rightTabs,
 	}
 }
@@ -131,7 +179,10 @@ function closeCurrentTab(state: TabbedEditorsState): TabbedEditorsState {
 		return {
 			leftTabs: [],
 			rightTabs: [],
-			currentTab: EditorStateMachine.init(),
+			currentTab: {
+				title: "",
+				editorState: EditorStateMachine.init(),
+			},
 		}
 	}
 }
@@ -184,9 +235,11 @@ function useStateMachine<S, A, D>(machine: StateMachine<S, A, D>, json?: D) {
 	return [state, dispatch] as const
 }
 
+const localStorageKey = "data2"
+
 export function App() {
 	const initialState = useMemo(
-		() => JSON.parse(localStorage.getItem("data")!),
+		() => JSON.parse(localStorage.getItem(localStorageKey)!),
 		[]
 	)
 
@@ -194,16 +247,12 @@ export function App() {
 
 	useEffect(() => {
 		localStorage.setItem(
-			"data",
+			localStorageKey,
 			JSON.stringify(TabbedEditorsMachine.save(state))
 		)
 	}, [state])
 
-	// TODO:
-	// - how to set the title of the tabbar without breaking encapsulation
-	// - declarative keyboard effects? like elmish
-
-	const editorState = state.currentTab
+	const editorState = state.currentTab.editorState
 	const editorDispatch = useCallback((action: EditorAction) => {
 		dispatch({ type: "edit-tab", action })
 	}, [])
@@ -246,7 +295,7 @@ function Tabbar(props: {
 		return (
 			<TabButton
 				key={direction}
-				index={i}
+				title={tab.title}
 				direction={direction}
 				dispatch={dispatch}
 			/>
@@ -256,7 +305,7 @@ function Tabbar(props: {
 	const currentTab = (
 		<TabButton
 			key={0}
-			index={state.leftTabs.length}
+			title={state.currentTab.title}
 			direction={0}
 			dispatch={dispatch}
 		/>
@@ -267,7 +316,7 @@ function Tabbar(props: {
 		return (
 			<TabButton
 				key={direction}
-				index={state.leftTabs.length + 1 + i}
+				title={tab.title}
 				direction={direction}
 				dispatch={dispatch}
 			/>
@@ -284,11 +333,11 @@ function Tabbar(props: {
 }
 
 function TabButton(props: {
-	index: number
+	title: string
 	direction: number
 	dispatch: (action: TabbedEditorsAction) => void
 }) {
-	const { index, direction, dispatch } = props
+	const { title, direction, dispatch } = props
 
 	const handleClick = useCallback(() => {
 		dispatch({ type: "change-tab", direction: direction })
@@ -302,7 +351,7 @@ function TabButton(props: {
 			}}
 			onClick={handleClick}
 		>
-			Tab {index}
+			{title || "Untitled"}
 		</button>
 	)
 }
