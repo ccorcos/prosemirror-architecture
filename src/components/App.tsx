@@ -11,27 +11,99 @@ import React, {
 // Tab-based Editor with top-Level state.
 // ==================================================================
 
-type StateMachine<S, A, D> = {
-	init: (data?: D) => S
-	update: (state: S, action: A) => S
-	save: (state: S) => D
+interface StateMachine<A, D> {
+	apply(action: A): this
+	toJSON(): D
 }
 
-type TabState = {
-	title: string
-	editorState: EditorState
+// Ew
+type StateMachineJSON<S extends StateMachine<any, any>> = ReturnType<
+	S["toJSON"]
+>
+
+// Very ew
+type StateMachineAction<S extends StateMachine<any, any>> = Parameters<
+	S["apply"]
+>[0]
+
+// ==================================================================
+// Mock of ProseMirror EditorState
+// ==================================================================
+
+type EditorStateJSON = { text: string }
+
+type EditorAction = { type: "change"; text: string }
+
+class EditorState {
+	constructor(public text: string) {}
+
+	apply(action: EditorAction) {
+		return new EditorState(action.text)
+	}
+
+	toJSON(): EditorStateJSON {
+		return { text: this.text }
+	}
+
+	static fromJSON(json: EditorStateJSON) {
+		return new EditorState(json.text)
+	}
 }
+
+// ==================================================================
+// TabState
+// ==================================================================
 
 type TabStateJSON = {
 	title: string
 	editorState: EditorStateJSON
 }
 
-type TabbedEditorsState = {
-	leftTabs: TabState[]
-	currentTab: TabState
-	rightTabs: TabState[]
+type TabAction = { type: "edit-tab"; action: EditorAction }
+
+class TabState {
+	public title: string
+	public editorState: EditorState
+
+	constructor(args: { title: string; editorState: EditorState }) {
+		this.title = args.title
+		this.editorState = args.editorState
+	}
+
+	toJSON(): TabStateJSON {
+		return {
+			title: this.title,
+			editorState: this.editorState.toJSON(),
+		}
+	}
+
+	apply(action: TabAction): TabState {
+		const editorState = this.editorState.apply(action.action)
+
+		let title = editorState.text.split("\n")[0] || "Untitled"
+		if (title.length > 10) title = title.slice(0, 10) + "..."
+
+		return new TabState({ title, editorState })
+	}
+
+	static empty() {
+		return new TabState({
+			title: "",
+			editorState: new EditorState(""),
+		})
+	}
+
+	static fromJSON(json: TabStateJSON): TabState {
+		return new TabState({
+			title: json.title,
+			editorState: EditorState.fromJSON(json.editorState),
+		})
+	}
 }
+
+// ==================================================================
+// TabbedEditors
+// ==================================================================
 
 type TabbedEditorsStateJSON = {
 	leftTabs: TabStateJSON[]
@@ -39,204 +111,190 @@ type TabbedEditorsStateJSON = {
 	rightTabs: TabStateJSON[]
 }
 
-type TabbedEditorsAction =
+type TabbedEditorAction =
 	| { type: "edit-tab"; action: EditorAction }
 	| { type: "change-tab"; direction: number }
 	| { type: "new-tab" }
 	| { type: "close-tab"; direction: number }
 
-const TabbedEditorsMachine: StateMachine<
-	TabbedEditorsState,
-	TabbedEditorsAction,
-	TabbedEditorsStateJSON
-> = {
-	init: (json) => {
-		if (!json)
-			return {
-				leftTabs: [],
-				rightTabs: [],
-				currentTab: {
-					title: "",
-					editorState: EditorStateMachine.init(),
-				},
-			}
-		return {
-			leftTabs: json.leftTabs.map((tabState) => ({
-				...tabState,
-				editorState: EditorState.fromJSON(tabState.editorState),
-			})),
-			rightTabs: json.rightTabs.map((tabState) => ({
-				...tabState,
-				editorState: EditorState.fromJSON(tabState.editorState),
-			})),
-			currentTab: {
-				...json.currentTab,
-				editorState: EditorState.fromJSON(json.currentTab.editorState),
-			},
-		}
-	},
-	update: (state, action) => {
+class TabbedEditorState {
+	public leftTabs: TabState[]
+	public currentTab: TabState
+	public rightTabs: TabState[]
+
+	constructor(args: {
+		leftTabs: TabState[]
+		currentTab: TabState
+		rightTabs: TabState[]
+	}) {
+		this.leftTabs = args.leftTabs
+		this.currentTab = args.currentTab
+		this.rightTabs = args.rightTabs
+	}
+
+	apply(action: TabbedEditorAction): TabbedEditorState {
 		switch (action.type) {
 			case "change-tab":
-				return changeTab(state, action.direction)
+				return this.changeTab(action.direction)
 			case "close-tab":
-				return closeTab(state, action.direction)
+				return this.closeTab(action.direction)
 			case "new-tab":
-				return newTab(state)
+				return this.newTab()
 			case "edit-tab": {
-				const editorState = EditorStateMachine.update(
-					state.currentTab.editorState,
-					action.action
-				)
-
-				let title = editorState.text.split("\n")[0] || "Untitled"
-				if (title.length > 10) title = title.slice(0, 10) + "..."
-
-				return {
-					...state,
-					currentTab: {
-						title,
-						editorState,
-					},
-				}
+				return new TabbedEditorState({
+					leftTabs: this.leftTabs,
+					rightTabs: this.rightTabs,
+					currentTab: this.currentTab.apply(action),
+				})
 			}
 		}
-	},
-	save: (state) => {
-		return {
-			leftTabs: state.leftTabs.map((s) => ({
-				title: s.title,
-				editorState: s.editorState.toJSON(),
-			})),
-			currentTab: {
-				title: state.currentTab.title,
-				editorState: state.currentTab.editorState.toJSON(),
-			},
-			rightTabs: state.rightTabs.map((s) => ({
-				title: s.title,
-				editorState: s.editorState.toJSON(),
-			})),
-		}
-	},
-}
-
-function newTab(state: TabbedEditorsState): TabbedEditorsState {
-	return {
-		leftTabs: [...state.leftTabs, state.currentTab],
-		currentTab: {
-			title: "",
-			editorState: EditorStateMachine.init(),
-		},
-		rightTabs: state.rightTabs,
-	}
-}
-
-function closeTab(state: TabbedEditorsState, direction: number) {
-	if (direction === 0) {
-		return closeCurrentTab(state)
 	}
 
-	if (direction > 0) {
-		const rightTabs = [...state.rightTabs]
-		rightTabs.splice(direction - 1, 1)
-		return { ...state, rightTabs }
+	toJSON(): TabbedEditorsStateJSON {
+		return {
+			leftTabs: this.leftTabs.map((s) => s.toJSON()),
+			currentTab: this.currentTab.toJSON(),
+			rightTabs: this.rightTabs.map((s) => s.toJSON()),
+		}
 	}
 
-	const leftTabs = [...state.leftTabs]
-	leftTabs.reverse()
-	leftTabs.splice(-1 * direction - 1, 1)
-	leftTabs.reverse()
-	return { ...state, leftTabs }
-}
-
-function closeCurrentTab(state: TabbedEditorsState): TabbedEditorsState {
-	if (state.rightTabs.length > 0) {
-		return {
-			leftTabs: state.leftTabs,
-			currentTab: state.rightTabs[0],
-			rightTabs: state.rightTabs.slice(1),
-		}
-	} else if (state.leftTabs.length > 0) {
-		return {
-			leftTabs: state.leftTabs.slice(0, -1),
-			currentTab: state.leftTabs[state.leftTabs.length - 1],
-			rightTabs: [],
-		}
-	} else {
-		return {
+	static empty() {
+		return new TabbedEditorState({
 			leftTabs: [],
 			rightTabs: [],
-			currentTab: {
-				title: "",
-				editorState: EditorStateMachine.init(),
-			},
+			currentTab: TabState.empty(),
+		})
+	}
+
+	static fromJSON(json: TabbedEditorsStateJSON) {
+		return new TabbedEditorState({
+			leftTabs: json.leftTabs.map(TabState.fromJSON),
+			rightTabs: json.rightTabs.map(TabState.fromJSON),
+			currentTab: TabState.fromJSON(json.currentTab),
+		})
+	}
+
+	private newTab() {
+		return new TabbedEditorState({
+			leftTabs: [...this.leftTabs, this.currentTab],
+			currentTab: TabState.empty(),
+			rightTabs: this.rightTabs,
+		})
+	}
+
+	private closeTab(direction: number) {
+		if (direction === 0) {
+			return this.closeCurrentTab()
+		}
+
+		if (direction > 0) {
+			const rightTabs = [...this.rightTabs]
+			rightTabs.splice(direction - 1, 1)
+			return new TabbedEditorState({
+				leftTabs: this.leftTabs,
+				currentTab: this.currentTab,
+				rightTabs,
+			})
+		}
+
+		const leftTabs = [...this.leftTabs]
+		leftTabs.reverse()
+		leftTabs.splice(-1 * direction - 1, 1)
+		leftTabs.reverse()
+		return new TabbedEditorState({
+			leftTabs,
+			currentTab: this.currentTab,
+			rightTabs: this.rightTabs,
+		})
+	}
+
+	private closeCurrentTab() {
+		if (this.rightTabs.length > 0) {
+			return new TabbedEditorState({
+				leftTabs: this.leftTabs,
+				currentTab: this.rightTabs[0],
+				rightTabs: this.rightTabs.slice(1),
+			})
+		} else if (this.leftTabs.length > 0) {
+			return new TabbedEditorState({
+				leftTabs: this.leftTabs.slice(0, -1),
+				currentTab: this.leftTabs[this.leftTabs.length - 1],
+				rightTabs: [],
+			})
+		} else {
+			return TabbedEditorState.empty()
 		}
 	}
-}
 
-function changeTab(state: TabbedEditorsState, direction: number) {
-	if (direction > 0) {
-		while (direction > 0) {
-			state = changeTabRight(state)
-			direction -= 1
+	private changeTab(direction: number) {
+		if (direction > 0) {
+			let state: TabbedEditorState = this
+			while (direction > 0) {
+				state = state.changeTabRight()
+				direction -= 1
+			}
+			return state
 		}
-		return state
-	}
-	if (direction < 0) {
-		while (direction < 0) {
-			state = changeTabLeft(state)
-			direction += 1
+		if (direction < 0) {
+			let state: TabbedEditorState = this
+			while (direction < 0) {
+				state = state.changeTabLeft()
+				direction += 1
+			}
+			return state
 		}
-		return state
+		return this
 	}
-	return state
+
+	protected changeTabLeft() {
+		if (this.leftTabs.length === 0) return this
+		const newCurrentTab = this.leftTabs[this.leftTabs.length - 1]
+		const remainingLeftTabs = this.leftTabs.slice(0, -1)
+		const newRightTabs = [this.currentTab, ...this.rightTabs]
+		return new TabbedEditorState({
+			leftTabs: remainingLeftTabs,
+			currentTab: newCurrentTab,
+			rightTabs: newRightTabs,
+		})
+	}
+
+	protected changeTabRight() {
+		if (this.rightTabs.length === 0) return this
+		const newCurrentTab = this.rightTabs[0]
+		const remainingRightTabs = this.rightTabs.slice(1)
+		const newLeftTabs = [...this.leftTabs, this.currentTab]
+		return new TabbedEditorState({
+			leftTabs: newLeftTabs,
+			currentTab: newCurrentTab,
+			rightTabs: remainingRightTabs,
+		})
+	}
 }
 
-function changeTabLeft(state: TabbedEditorsState): TabbedEditorsState {
-	if (state.leftTabs.length === 0) return state
-	const newCurrentTab = state.leftTabs[state.leftTabs.length - 1]
-	const remainingLeftTabs = state.leftTabs.slice(0, -1)
-	const newRightTabs = [state.currentTab, ...state.rightTabs]
-	return {
-		leftTabs: remainingLeftTabs,
-		currentTab: newCurrentTab,
-		rightTabs: newRightTabs,
-	}
-}
-
-function changeTabRight(state: TabbedEditorsState): TabbedEditorsState {
-	if (state.rightTabs.length === 0) return state
-	const newCurrentTab = state.rightTabs[0]
-	const remainingRightTabs = state.rightTabs.slice(1)
-	const newLeftTabs = [...state.leftTabs, state.currentTab]
-	return {
-		leftTabs: newLeftTabs,
-		currentTab: newCurrentTab,
-		rightTabs: remainingRightTabs,
-	}
-}
-
-function useStateMachine<S, A, D>(machine: StateMachine<S, A, D>, json?: D) {
-	const initialState = useMemo(() => machine.init(json), [])
-	const [state, dispatch] = useReducer(machine.update, initialState)
+function useStateMachine<S extends StateMachine<any, any>>(initialState: S) {
+	const [state, dispatch] = useReducer(
+		(state: S, action: StateMachineAction<S>) => state.apply(action),
+		initialState
+	)
 	return [state, dispatch] as const
 }
 
-const localStorageKey = "data2"
+const localStorageKey = "data3"
 
 export function App() {
-	const initialState = useMemo(
+	const initialStateJson = useMemo(
 		() => JSON.parse(localStorage.getItem(localStorageKey)!),
 		[]
 	)
 
-	const [state, dispatch] = useStateMachine(TabbedEditorsMachine, initialState)
+	const initialState = initialStateJson
+		? TabbedEditorState.fromJSON(initialStateJson)
+		: TabbedEditorState.empty()
+
+	const [state, dispatch] = useStateMachine(initialState)
 
 	useEffect(() => {
-		localStorage.setItem(
-			localStorageKey,
-			JSON.stringify(TabbedEditorsMachine.save(state))
-		)
+		localStorage.setItem(localStorageKey, JSON.stringify(state.toJSON()))
 	}, [state])
 
 	const editorState = state.currentTab.editorState
@@ -253,7 +311,7 @@ export function App() {
 	)
 }
 
-function Toolbar(props: { dispatch: (action: TabbedEditorsAction) => void }) {
+function Toolbar(props: { dispatch: (action: TabbedEditorAction) => void }) {
 	const { dispatch } = props
 
 	const handleNewTab = useCallback(() => dispatch({ type: "new-tab" }), [])
@@ -268,8 +326,8 @@ function Toolbar(props: { dispatch: (action: TabbedEditorsAction) => void }) {
 }
 
 function Tabbar(props: {
-	state: TabbedEditorsState
-	dispatch: (action: TabbedEditorsAction) => void
+	state: TabbedEditorState
+	dispatch: (action: TabbedEditorAction) => void
 }) {
 	const { state, dispatch } = props
 
@@ -322,7 +380,7 @@ function Tabbar(props: {
 function TabButton(props: {
 	title: string
 	direction: number
-	dispatch: (action: TabbedEditorsAction) => void
+	dispatch: (action: TabbedEditorAction) => void
 }) {
 	const { title, direction, dispatch } = props
 
@@ -364,38 +422,8 @@ export function EditorComponent(props: {
 }
 
 // ==================================================================
-// ProseMirror Editor Mock
+// Mock of ProseMirror EditorView
 // ==================================================================
-
-const EditorStateMachine: StateMachine<
-	EditorState,
-	EditorAction,
-	EditorStateJSON
-> = {
-	init: (json) => (json ? EditorState.fromJSON(json) : new EditorState("")),
-	update: (state, action) => state.apply(action),
-	save: (state) => state.toJSON(),
-}
-
-type EditorStateJSON = { text: string }
-
-type EditorAction = { type: "change"; text: string }
-
-class EditorState {
-	constructor(public text: string) {}
-
-	apply(action: EditorAction) {
-		return new EditorState(action.text)
-	}
-
-	toJSON(): EditorStateJSON {
-		return { text: this.text }
-	}
-
-	static fromJSON(json: EditorStateJSON) {
-		return new EditorState(json.text)
-	}
-}
 
 class EditorView {
 	private textArea: HTMLTextAreaElement
