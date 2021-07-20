@@ -1,4 +1,4 @@
-# ProseMirror-like Frontend Architecture
+# ProseMirror-like Frontend Architecture [[DEMO](https://ccorcos.github.io/prosemirror-architecture/)]
 
 Goal:
 Since I'm already using ProseMirror, what if we were to model an entire application with a similar
