@@ -1,5 +1,6 @@
 import React, {
 	useCallback,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useReducer,
@@ -184,12 +185,22 @@ function useStateMachine<S, A, D>(machine: StateMachine<S, A, D>, json?: D) {
 }
 
 export function App() {
-	const [state, dispatch] = useStateMachine(TabbedEditorsMachine)
+	const initialState = useMemo(
+		() => JSON.parse(localStorage.getItem("data")!),
+		[]
+	)
+
+	const [state, dispatch] = useStateMachine(TabbedEditorsMachine, initialState)
+
+	useEffect(() => {
+		localStorage.setItem(
+			"data",
+			JSON.stringify(TabbedEditorsMachine.save(state))
+		)
+	}, [state])
 
 	// TODO:
 	// - how to set the title of the tabbar without breaking encapsulation
-	// - how to save the state to localStorage?
-	// - UI for changing tabs, etc.
 	// - declarative keyboard effects? like elmish
 
 	const editorState = state.currentTab
@@ -363,7 +374,7 @@ class EditorView {
 		this.textArea.style.width = "100%"
 		this.textArea.value = state.text
 		node.appendChild(this.textArea)
-		this.textArea.addEventListener("change", this.handleChange)
+		this.textArea.addEventListener("input", this.handleChange)
 	}
 
 	private handleChange = () => {
@@ -376,7 +387,7 @@ class EditorView {
 	}
 
 	public destroy() {
-		this.textArea.removeEventListener("change", this.handleChange)
+		this.textArea.removeEventListener("input", this.handleChange)
 		this.node.removeChild(this.textArea)
 	}
 }
