@@ -11,10 +11,9 @@ import React, {
 // Tab-based Editor with top-Level state.
 // ==================================================================
 
-type StateMachine<S, A, D> = {
-	init: (data?: D) => S
+type StateMachine<S, A> = {
+	init: () => S
 	update: (state: S, action: A) => S
-	save: (state: S) => D
 }
 
 type TabState = {
@@ -22,21 +21,10 @@ type TabState = {
 	editorState: EditorState
 }
 
-type TabStateJSON = {
-	title: string
-	editorState: EditorStateJSON
-}
-
 type TabbedEditorsState = {
 	leftTabs: TabState[]
 	currentTab: TabState
 	rightTabs: TabState[]
-}
-
-type TabbedEditorsStateJSON = {
-	leftTabs: TabStateJSON[]
-	currentTab: TabStateJSON
-	rightTabs: TabStateJSON[]
 }
 
 type TabbedEditorsAction =
@@ -47,31 +35,15 @@ type TabbedEditorsAction =
 
 const TabbedEditorsMachine: StateMachine<
 	TabbedEditorsState,
-	TabbedEditorsAction,
-	TabbedEditorsStateJSON
+	TabbedEditorsAction
 > = {
-	init: (json) => {
-		if (!json)
-			return {
-				leftTabs: [],
-				rightTabs: [],
-				currentTab: {
-					title: "",
-					editorState: EditorStateMachine.init(),
-				},
-			}
+	init: () => {
 		return {
-			leftTabs: json.leftTabs.map((tabState) => ({
-				...tabState,
-				editorState: EditorState.fromJSON(tabState.editorState),
-			})),
-			rightTabs: json.rightTabs.map((tabState) => ({
-				...tabState,
-				editorState: EditorState.fromJSON(tabState.editorState),
-			})),
+			leftTabs: [],
+			rightTabs: [],
 			currentTab: {
-				...json.currentTab,
-				editorState: EditorState.fromJSON(json.currentTab.editorState),
+				title: "",
+				editorState: EditorStateMachine.init(),
 			},
 		}
 	},
@@ -100,22 +72,6 @@ const TabbedEditorsMachine: StateMachine<
 					},
 				}
 			}
-		}
-	},
-	save: (state) => {
-		return {
-			leftTabs: state.leftTabs.map((s) => ({
-				title: s.title,
-				editorState: s.editorState.toJSON(),
-			})),
-			currentTab: {
-				title: state.currentTab.title,
-				editorState: state.currentTab.editorState.toJSON(),
-			},
-			rightTabs: state.rightTabs.map((s) => ({
-				title: s.title,
-				editorState: s.editorState.toJSON(),
-			})),
 		}
 	},
 }
@@ -216,13 +172,15 @@ function changeTabRight(state: TabbedEditorsState): TabbedEditorsState {
 	}
 }
 
-function useStateMachine<S, A, D>(machine: StateMachine<S, A, D>, json?: D) {
-	const initialState = useMemo(() => machine.init(json), [])
-	const [state, dispatch] = useReducer(machine.update, initialState)
+function useStateMachine<S, A>(machine: StateMachine<S, A>, initialState?: S) {
+	const [state, dispatch] = useReducer(
+		machine.update,
+		initialState || machine.init()
+	)
 	return [state, dispatch] as const
 }
 
-const localStorageKey = "data2"
+const localStorageKey = "data3"
 
 export function App() {
 	const initialState = useMemo(
@@ -233,10 +191,7 @@ export function App() {
 	const [state, dispatch] = useStateMachine(TabbedEditorsMachine, initialState)
 
 	useEffect(() => {
-		localStorage.setItem(
-			localStorageKey,
-			JSON.stringify(TabbedEditorsMachine.save(state))
-		)
+		localStorage.setItem(localStorageKey, JSON.stringify(state))
 	}, [state])
 
 	const editorState = state.currentTab.editorState
@@ -367,35 +322,14 @@ export function EditorComponent(props: {
 // ProseMirror Editor Mock
 // ==================================================================
 
-const EditorStateMachine: StateMachine<
-	EditorState,
-	EditorAction,
-	EditorStateJSON
-> = {
-	init: (json) => (json ? EditorState.fromJSON(json) : new EditorState("")),
-	update: (state, action) => state.apply(action),
-	save: (state) => state.toJSON(),
+const EditorStateMachine: StateMachine<EditorState, EditorAction> = {
+	init: () => ({ text: "" }),
+	update: (state, action) => ({ text: action.text }),
 }
 
-type EditorStateJSON = { text: string }
+type EditorState = { text: string }
 
 type EditorAction = { type: "change"; text: string }
-
-class EditorState {
-	constructor(public text: string) {}
-
-	apply(action: EditorAction) {
-		return new EditorState(action.text)
-	}
-
-	toJSON(): EditorStateJSON {
-		return { text: this.text }
-	}
-
-	static fromJSON(json: EditorStateJSON) {
-		return new EditorState(json.text)
-	}
-}
 
 class EditorView {
 	private textArea: HTMLTextAreaElement
