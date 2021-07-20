@@ -1,4 +1,10 @@
-import React, { useLayoutEffect, useMemo, useReducer, useRef } from "react"
+import React, {
+	useCallback,
+	useLayoutEffect,
+	useMemo,
+	useReducer,
+	useRef,
+} from "react"
 
 // Goal:
 // What if I modeled by entire application in this Elm/ProseMirror/Redux sort of way?
@@ -180,19 +186,132 @@ function useStateMachine<S, A, D>(machine: StateMachine<S, A, D>, json?: D) {
 export function App() {
 	const [state, dispatch] = useStateMachine(TabbedEditorsMachine)
 
-	return <EditorComponent />
+	// TODO:
+	// - how to set the title of the tabbar without breaking encapsulation
+	// - how to save the state to localStorage?
+	// - UI for changing tabs, etc.
+	// - declarative keyboard effects? like elmish
+
+	const editorState = state.currentTab
+	const editorDispatch = useCallback((action: EditorAction) => {
+		dispatch({ type: "edit-tab", action })
+	}, [])
+
+	return (
+		<div>
+			<Tabbar state={state} dispatch={dispatch} />
+			<Toolbar dispatch={dispatch} />
+			<EditorComponent state={editorState} dispatch={editorDispatch} />
+		</div>
+	)
 }
 
-export function EditorComponent() {
+function Toolbar(props: { dispatch: (action: TabbedEditorsAction) => void }) {
+	const { dispatch } = props
+
+	const handleNewTab = useCallback(() => dispatch({ type: "new-tab" }), [])
+
+	return (
+		<div style={{ display: "flex" }}>
+			<button style={{ margin: 4 }} onClick={handleNewTab}>
+				New Tab
+			</button>
+		</div>
+	)
+}
+
+function Tabbar(props: {
+	state: TabbedEditorsState
+	dispatch: (action: TabbedEditorsAction) => void
+}) {
+	const { state, dispatch } = props
+
+	const leftTabs = state.leftTabs.map((tab, i, list) => {
+		// length 3 list
+		// 0 -> -3
+		// 1 -> -2
+		// 2 -> -1
+		const direction = i - list.length
+		return (
+			<TabButton
+				key={direction}
+				index={i}
+				direction={direction}
+				dispatch={dispatch}
+			/>
+		)
+	})
+
+	const currentTab = (
+		<TabButton
+			key={0}
+			index={state.leftTabs.length}
+			direction={0}
+			dispatch={dispatch}
+		/>
+	)
+
+	const rightTabs = state.rightTabs.map((tab, i, list) => {
+		const direction = i + 1
+		return (
+			<TabButton
+				key={direction}
+				index={state.leftTabs.length + 1 + i}
+				direction={direction}
+				dispatch={dispatch}
+			/>
+		)
+	})
+
+	return (
+		<div style={{ display: "flex" }}>
+			{leftTabs}
+			{currentTab}
+			{rightTabs}
+		</div>
+	)
+}
+
+function TabButton(props: {
+	index: number
+	direction: number
+	dispatch: (action: TabbedEditorsAction) => void
+}) {
+	const { index, direction, dispatch } = props
+
+	const handleClick = useCallback(() => {
+		dispatch({ type: "change-tab", direction: direction })
+	}, [direction])
+
+	return (
+		<button
+			style={{
+				border: direction === 0 ? "1px solid orange" : undefined,
+				margin: 4,
+			}}
+			onClick={handleClick}
+		>
+			Tab {index}
+		</button>
+	)
+}
+
+export function EditorComponent(props: {
+	state: EditorState
+	dispatch: (action: EditorAction) => void
+}) {
 	const nodeRef = useRef<HTMLDivElement | null>(null)
 
+	const viewRef = useRef<EditorView | null>(null)
 	useLayoutEffect(() => {
-		const state = new EditorState("")
-		const view = new Editor(nodeRef.current!, state, function (action) {
-			const nextState = this.state.apply(action)
-			this.updateState(nextState)
-		})
-	})
+		const view = new EditorView(nodeRef.current!, props.state, props.dispatch)
+		viewRef.current = view
+		return () => view.destroy()
+	}, [props.dispatch])
+
+	useLayoutEffect(() => {
+		viewRef.current?.updateState(props.state)
+	}, [viewRef.current, props.state])
 
 	return <div ref={nodeRef} style={{ height: 400, width: 300 }} />
 }
@@ -231,13 +350,13 @@ class EditorState {
 	}
 }
 
-class Editor {
+class EditorView {
 	private textArea: HTMLTextAreaElement
 
 	constructor(
-		node: HTMLElement,
+		private node: HTMLElement,
 		public state: EditorState,
-		public dispatch: (this: Editor, action: EditorAction) => void
+		public dispatch: (this: EditorView, action: EditorAction) => void
 	) {
 		this.textArea = document.createElement("textarea")
 		this.textArea.style.height = "100%"
@@ -254,5 +373,10 @@ class Editor {
 	public updateState(state: EditorState) {
 		this.state = state
 		this.textArea.value = state.text
+	}
+
+	public destroy() {
+		this.textArea.removeEventListener("change", this.handleChange)
+		this.node.removeChild(this.textArea)
 	}
 }
